@@ -7,6 +7,7 @@ using RoomBooking.Api.Services;
 namespace RoomBooking.Api.Controllers;
 
 public record CreateBookingRequest(int RoomId, DateTimeOffset StartTime, DateTimeOffset EndTime, string Purpose);
+public record ReviewBookingRequest(bool Approve, string? Comment);
 
 [ApiController]
 [Route("api")]
@@ -44,6 +45,7 @@ public class RoomsAndBookingsController(AppDbContext db, BookingService bookingS
             r.Building,
             r.Capacity,
             r.Equipment,
+            RequiresApproval = r.Capacity > BookingService.LargeRoomCapacityThreshold,
             IsAvailable = !busyRoomIds.Contains(r.Id)
         });
 
@@ -104,5 +106,56 @@ public class RoomsAndBookingsController(AppDbContext db, BookingService bookingS
             return StatusCode(res.StatusCode, new { error = res.Error });
 
         return Ok(new { res.Data!.Id, Status = res.Data.Status.ToString() });
+    }
+
+    [HttpGet("bookings/pending")]
+    public async Task<IActionResult> GetPendingBookings()
+    {
+        var user = GetCurrentUser();
+        if (user is null) return Unauthorized(new { error = "Потрібна авторизація." });
+        if (user.Role != UserRole.Admin) return StatusCode(403, new { error = "Доступ лише для адміністратора." });
+
+        var items = await db.Bookings
+            .Include(b => b.Room)
+            .Include(b => b.User)
+            .Where(b => b.Status == BookingStatus.Pending)
+            .OrderBy(b => b.StartTime)
+            .Select(b => new
+            {
+                b.Id,
+                b.RoomId,
+                RoomName = b.Room.Name,
+                Building = b.Room.Building,
+                Capacity = b.Room.Capacity,
+                AuthorName = b.User.FullName,
+                AuthorUsername = b.User.Username,
+                b.StartTime,
+                b.EndTime,
+                b.Purpose,
+                Status = b.Status.ToString()
+            })
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
+    [HttpPost("bookings/{id:int}/review")]
+    public async Task<IActionResult> ReviewBooking(int id, [FromBody] ReviewBookingRequest req)
+    {
+        var user = GetCurrentUser();
+        if (user is null) return Unauthorized(new { error = "Потрібна авторизація." });
+
+        var res = await bookingService.ReviewBookingAsync(id, user.UserId, req.Approve, req.Comment);
+        if (!res.IsSuccess)
+            return StatusCode(res.StatusCode, new { error = res.Error });
+
+        return Ok(new
+        {
+            res.Data!.Id,
+            Status = res.Data.Status.ToString(),
+            res.Data.ReviewedByUserId,
+            res.Data.ReviewedAt,
+            res.Data.ReviewComment
+        });
     }
 }
