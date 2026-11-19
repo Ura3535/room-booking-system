@@ -20,10 +20,10 @@ jobs:
           dotnet-version: "10.0.x"
 
       - name: Restore dependencies
-        run: dotnet restore RoomBooking.sln
+        run: dotnet restore RoomBooking.slnx
 
       - name: Build solution
-        run: dotnet build RoomBooking.sln --no-restore --configuration Release
+        run: dotnet build RoomBooking.slnx --no-restore --configuration Release
 
       - name: Run unit tests
-        run: dotnet test RoomBooking.sln --no-build --configuration Release --verbosity normal
+        run: dotnet test RoomBooking.slnx --no-build --configuration Release --verbosity normal
