@@ -10,15 +10,10 @@ public record CreateBookingRequest(int RoomId, DateTimeOffset StartTime, DateTim
 
 [ApiController]
 [Route("api")]
-public class RoomsAndBookingsController(AppDbContext db, BookingService bookingService) : ControllerBase
+public class RoomsAndBookingsController(AppDbContext db, BookingService bookingService, TokenService tokenService) : ControllerBase
 {
-    // Допоміжний метод: зчитуємо X-User-Id із заголовка (за замовчуванням student1 = 1)
-    private int GetCurrentUserId()
-        => Request.Headers.TryGetValue("X-User-Id", out var val) && int.TryParse(val, out var id) ? id : 1;
-
-    [HttpGet("users")]
-    public async Task<IActionResult> GetUsers()
-        => Ok(await db.Users.OrderBy(u => u.Id).ToListAsync());
+    private TokenPayload? GetCurrentUser()
+        => tokenService.ValidateToken(Request.Headers.Authorization);
 
     // FR-01: Перегляд аудиторій і доступності на інтервал [start, end)
     [HttpGet("rooms")]
@@ -59,8 +54,10 @@ public class RoomsAndBookingsController(AppDbContext db, BookingService bookingS
     [HttpPost("bookings")]
     public async Task<IActionResult> CreateBooking([FromBody] CreateBookingRequest req)
     {
-        var userId = GetCurrentUserId();
-        var res = await bookingService.CreateBookingAsync(userId, req.RoomId, req.StartTime, req.EndTime, req.Purpose);
+        var user = GetCurrentUser();
+        if (user is null) return Unauthorized(new { error = "Потрібна авторизація." });
+
+        var res = await bookingService.CreateBookingAsync(user.UserId, req.RoomId, req.StartTime, req.EndTime, req.Purpose);
         if (!res.IsSuccess)
             return StatusCode(res.StatusCode, new { error = res.Error });
 
@@ -71,10 +68,12 @@ public class RoomsAndBookingsController(AppDbContext db, BookingService bookingS
     [HttpGet("bookings/my")]
     public async Task<IActionResult> GetMyBookings()
     {
-        var userId = GetCurrentUserId();
+        var user = GetCurrentUser();
+        if (user is null) return Unauthorized(new { error = "Потрібна авторизація." });
+
         var items = await db.Bookings
             .Include(b => b.Room)
-            .Where(b => b.UserId == userId)
+            .Where(b => b.UserId == user.UserId)
             .OrderByDescending(b => b.StartTime)
             .Select(b => new
             {
@@ -97,8 +96,10 @@ public class RoomsAndBookingsController(AppDbContext db, BookingService bookingS
     [HttpPost("bookings/{id:int}/cancel")]
     public async Task<IActionResult> CancelBooking(int id)
     {
-        var userId = GetCurrentUserId();
-        var res = await bookingService.CancelBookingAsync(id, userId);
+        var user = GetCurrentUser();
+        if (user is null) return Unauthorized(new { error = "Потрібна авторизація." });
+
+        var res = await bookingService.CancelBookingAsync(id, user.UserId);
         if (!res.IsSuccess)
             return StatusCode(res.StatusCode, new { error = res.Error });
 

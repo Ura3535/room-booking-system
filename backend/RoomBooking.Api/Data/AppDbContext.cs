@@ -20,11 +20,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     {
         if (!await db.Users.AnyAsync())
         {
-            db.Users.AddRange(
-                new AppUser { Id = 1, Username = "student1", FullName = "Іван Петренко (Студент)", Role = UserRole.Student },
-                new AppUser { Id = 2, Username = "student2", FullName = "Олена Коваль (Студентка)", Role = UserRole.Student },
-                new AppUser { Id = 3, Username = "admin", FullName = "Дмитро Сидоренко (Адмін)", Role = UserRole.Admin }
-            );
+            if (!await db.Users.AnyAsync())
+            {
+                db.Users.AddRange(
+                    new AppUser { Id = 1, Username = "student1", Password = "1234", FullName = "Іван Петренко", Role = UserRole.Student },
+                    new AppUser { Id = 2, Username = "student2", Password = "1234", FullName = "Олена Коваль", Role = UserRole.Student },
+                    new AppUser { Id = 3, Username = "admin", Password = "admin", FullName = "Дмитро Сидоренко", Role = UserRole.Admin }
+                );
+            }
         }
 
         if (!await db.Rooms.AnyAsync())
