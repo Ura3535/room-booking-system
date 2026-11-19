@@ -1,7 +1,4 @@
-<script setup>
-import HelloWorld from "./components/HelloWorld.vue";
-</script>
-
 <template>
-  <HelloWorld />
+  <!-- Конфігурація інтервалів [start, end)-->
+  <div>Конфігурація часових слотів [start, end)</div>
 </template>
