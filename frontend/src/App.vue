@@ -34,11 +34,13 @@ function quickFill(u, p) {
 }
 
 // --- Стан дашборду ---
-const activeTab = ref("rooms"); // 'rooms' | 'my'
+const activeTab = ref("rooms"); // 'rooms' | 'my' | 'admin'
 const rooms = ref([]);
 const myBookings = ref([]);
+const pendingBookings = ref([]);
 const loadingRooms = ref(false);
 const loadingBookings = ref(false);
+const loadingPending = ref(false);
 
 // За замовчуванням завтрашній день 10:00 - 11:30 (Europe/Kyiv +02:00)
 const getTomorrowStr = () => {
@@ -67,7 +69,7 @@ function showToast(type, text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     toast.value = { type: "", text: "" };
-  }, 4500);
+  }, 5000);
 }
 
 const startIso = computed(
@@ -126,9 +128,26 @@ async function fetchMyBookings() {
   }
 }
 
+async function fetchPendingBookings() {
+  if (currentUser.value?.role !== "Admin") return;
+  loadingPending.value = true;
+  try {
+    const res = await fetch(`${API_URL}/bookings/pending`, {
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      pendingBookings.value = await res.json();
+    }
+  } finally {
+    loadingPending.value = false;
+  }
+}
+
 function openBookingModal(room) {
   modalRoom.value = room;
-  bookingPurpose.value = "Семінар / консультація";
+  bookingPurpose.value = room.requiresApproval
+    ? "Загальнофакультетський захід"
+    : "Семінар / консультація";
 }
 
 async function confirmBooking() {
@@ -150,12 +169,25 @@ async function confirmBooking() {
       showToast("error", `Помилка [${res.status}]: ${data.error}`);
       return;
     }
-    showToast(
-      "success",
-      `Аудиторію ${modalRoom.value.name} успішно заброньовано (#${data.id})`,
-    );
+
+    if (data.status === "Pending") {
+      showToast(
+        "info",
+        `Заявку #${data.id} на ${modalRoom.value.name} створено зі статусом PENDING (очікує погодження адміна)`,
+      );
+    } else {
+      showToast(
+        "success",
+        `Аудиторію ${modalRoom.value.name} успішно заброньовано (#${data.id})`,
+      );
+    }
+
     modalRoom.value = null;
-    await Promise.all([fetchRooms(), fetchMyBookings()]);
+    await Promise.all([
+      fetchRooms(),
+      fetchMyBookings(),
+      fetchPendingBookings(),
+    ]);
   } finally {
     submittingBooking.value = false;
   }
@@ -172,7 +204,31 @@ async function cancelBooking(id) {
     return;
   }
   showToast("success", `Бронювання #${id} скасовано, слот звільнено`);
-  await Promise.all([fetchRooms(), fetchMyBookings()]);
+  await Promise.all([fetchRooms(), fetchMyBookings(), fetchPendingBookings()]);
+}
+
+async function reviewBooking(id, approve) {
+  const comment = approve
+    ? "Погоджено адміністратором"
+    : "Відхилено: аудиторія зарезервована під захід факультету";
+
+  const res = await fetch(`${API_URL}/bookings/${id}/review`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ approve, comment }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    showToast("error", `Помилка [${res.status}]: ${data.error}`);
+    return;
+  }
+  showToast(
+    "success",
+    approve
+      ? `Заявку #${id} погоджено (Active)`
+      : `Заявку #${id} відхилено (Rejected), слот звільнено`,
+  );
+  await Promise.all([fetchRooms(), fetchMyBookings(), fetchPendingBookings()]);
 }
 
 function formatKyivTime(isoStr) {
@@ -186,9 +242,16 @@ function formatKyivTime(isoStr) {
   });
 }
 
+function handleLogout() {
+  activeTab.value = "rooms";
+  pendingBookings.value = [];
+  myBookings.value = [];
+  logout();
+}
+
 async function initDashboard() {
   if (!isAuthenticated.value) return;
-  await Promise.all([fetchRooms(), fetchMyBookings()]);
+  await Promise.all([fetchRooms(), fetchMyBookings(), fetchPendingBookings()]);
 }
 
 watch([selectedDate, startHour, endHour], () => {
@@ -215,7 +278,7 @@ onMounted(initDashboard);
         </div>
         <h1 class="text-2xl font-bold text-slate-900">RoomBooking</h1>
         <p class="text-sm text-slate-500 mt-1">
-          Університетський сервіс бронювання аудиторій
+          Університетський сервіс бронювання аудиторій • v2.0
         </p>
       </div>
 
@@ -312,7 +375,7 @@ onMounted(initDashboard);
     <!-- Навігаційна панель -->
     <header class="bg-white border-b border-slate-200 sticky top-0 z-30">
       <div
-        class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between"
+        class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-2"
       >
         <div class="flex items-center gap-3">
           <div
@@ -325,7 +388,7 @@ onMounted(initDashboard);
             <span
               class="ml-2 text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200"
             >
-              v1.0
+              v2.0
             </span>
           </div>
         </div>
@@ -334,7 +397,7 @@ onMounted(initDashboard);
         <nav class="flex gap-1 bg-slate-100 p-1 rounded-xl">
           <button
             @click="activeTab = 'rooms'"
-            class="px-4 py-1.5 rounded-lg text-sm font-medium transition"
+            class="px-3.5 py-1.5 rounded-lg text-sm font-medium transition"
             :class="
               activeTab === 'rooms'
                 ? 'bg-white text-slate-900 shadow-sm'
@@ -345,7 +408,7 @@ onMounted(initDashboard);
           </button>
           <button
             @click="activeTab = 'my'"
-            class="px-4 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-2"
+            class="px-3.5 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-2"
             :class="
               activeTab === 'my'
                 ? 'bg-white text-slate-900 shadow-sm'
@@ -356,14 +419,36 @@ onMounted(initDashboard);
             <span
               class="px-1.5 py-0.2 text-xs rounded-full bg-indigo-100 text-indigo-700 font-semibold"
             >
-              {{ myBookings.filter((b) => b.status === "Active").length }}
+              {{
+                myBookings.filter(
+                  (b) => b.status === "Active" || b.status === "Pending",
+                ).length
+              }}
+            </span>
+          </button>
+          <button
+            v-if="currentUser.role === 'Admin'"
+            @click="activeTab = 'admin'"
+            class="px-3.5 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-2"
+            :class="
+              activeTab === 'admin'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            "
+          >
+            Погодження заявок
+            <span
+              v-if="pendingBookings.length > 0"
+              class="px-1.5 py-0.2 text-xs rounded-full bg-amber-100 text-amber-800 font-semibold"
+            >
+              {{ pendingBookings.length }}
             </span>
           </button>
         </nav>
 
         <!-- Профіль -->
         <div class="flex items-center gap-3">
-          <div class="text-right hidden sm:block">
+          <div class="text-right hidden md:block">
             <div class="text-sm font-semibold text-slate-800">
               {{ currentUser.fullName }}
             </div>
@@ -372,7 +457,7 @@ onMounted(initDashboard);
             </div>
           </div>
           <button
-            @click="logout"
+            @click="handleLogout"
             class="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-slate-200 transition"
           >
             Вийти
@@ -385,11 +470,12 @@ onMounted(initDashboard);
     <div v-if="toast.text" class="fixed bottom-5 right-5 z-50 max-w-md">
       <div
         class="px-4 py-3 rounded-xl shadow-lg border text-sm font-medium flex items-center gap-3"
-        :class="
-          toast.type === 'error'
-            ? 'bg-rose-600 text-white border-rose-700'
-            : 'bg-emerald-600 text-white border-emerald-700'
-        "
+        :class="{
+          'bg-rose-600 text-white border-rose-700': toast.type === 'error',
+          'bg-amber-600 text-white border-amber-700': toast.type === 'info',
+          'bg-emerald-600 text-white border-emerald-700':
+            toast.type === 'success',
+        }"
       >
         <span>{{ toast.text }}</span>
       </div>
@@ -399,7 +485,6 @@ onMounted(initDashboard);
     <main class="max-w-6xl w-full mx-auto px-4 sm:px-6 py-8 flex-1">
       <!-- ВКЛАДКА 1: ПОШУК АУДИТОРІЙ -->
       <div v-if="activeTab === 'rooms'" class="space-y-6">
-        <!-- Панель вибору інтервалу -->
         <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
           <div
             class="flex flex-col md:flex-row md:items-end justify-between gap-4"
@@ -419,8 +504,8 @@ onMounted(initDashboard);
               <div>
                 <label
                   class="block text-xs font-semibold text-slate-500 uppercase mb-1"
-                  >Початок</label
-                >
+                  >Початок
+                </label>
                 <input
                   type="time"
                   v-model="startHour"
@@ -430,8 +515,8 @@ onMounted(initDashboard);
               <div>
                 <label
                   class="block text-xs font-semibold text-slate-500 uppercase mb-1"
-                  >Завершення</label
-                >
+                  >Завершення
+                </label>
                 <input
                   type="time"
                   v-model="endHour"
@@ -492,16 +577,24 @@ onMounted(initDashboard);
                     {{ room.name }}
                   </h3>
                 </div>
-                <span
-                  class="px-2.5 py-1 rounded-full text-xs font-semibold"
-                  :class="
-                    room.isAvailable
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : 'bg-rose-50 text-rose-700 border border-rose-200'
-                  "
-                >
-                  {{ room.isAvailable ? "Вільна" : "Зайнята" }}
-                </span>
+                <div class="flex flex-col items-end gap-1.5">
+                  <span
+                    class="px-2.5 py-1 rounded-full text-xs font-semibold"
+                    :class="
+                      room.isAvailable
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : 'bg-rose-50 text-rose-700 border border-rose-200'
+                    "
+                  >
+                    {{ room.isAvailable ? "Вільна" : "Зайнята" }}
+                  </span>
+                  <span
+                    v-if="room.requiresApproval"
+                    class="px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200"
+                  >
+                    Потребує погодження (&gt;100 м.)
+                  </span>
+                </div>
               </div>
 
               <div class="mt-4 space-y-2 text-sm text-slate-600">
@@ -533,7 +626,13 @@ onMounted(initDashboard);
                     : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                 "
               >
-                {{ room.isAvailable ? "Забронювати слот" : "Слот зайнятий" }}
+                {{
+                  room.isAvailable
+                    ? room.requiresApproval
+                      ? "Подати заявку"
+                      : "Забронювати слот"
+                    : "Слот зайнятий"
+                }}
               </button>
             </div>
           </div>
@@ -624,11 +723,109 @@ onMounted(initDashboard);
                 </td>
                 <td class="py-4 px-6 text-right">
                   <button
-                    v-if="b.status === 'Active'"
+                    v-if="b.status === 'Active' || b.status === 'Pending'"
                     @click="cancelBooking(b.id)"
                     class="px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg transition"
                   >
                     Скасувати
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ВКЛАДКА 3: АДМІН-ПАНЕЛЬ ПОГОДЖЕННЯ (v2.0) -->
+      <div
+        v-if="activeTab === 'admin' && currentUser.role === 'Admin'"
+        class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden"
+      >
+        <div
+          class="px-6 py-4 border-b border-slate-200 flex items-center justify-between"
+        >
+          <div>
+            <h2 class="font-bold text-slate-900">
+              Заявки на великі аудиторії (&gt; 100 місць)
+            </h2>
+            <p class="text-xs text-slate-500 mt-0.5">
+              Слот утримується в стані Pending до ухвалення рішення
+              адміністратором
+            </p>
+          </div>
+          <button
+            @click="fetchPendingBookings"
+            class="text-sm text-indigo-600 hover:underline"
+          >
+            Оновити
+          </button>
+        </div>
+
+        <div v-if="loadingPending" class="p-8 text-center text-slate-500">
+          Завантаження...
+        </div>
+        <div
+          v-else-if="pendingBookings.length === 0"
+          class="p-12 text-center text-slate-500"
+        >
+          Немає заявок, що очікують погодження.
+        </div>
+        <div v-else class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr
+                class="bg-slate-50 text-xs font-semibold text-slate-500 uppercase border-b border-slate-200"
+              >
+                <th class="py-3.5 px-6">ID</th>
+                <th class="py-3.5 px-6">Заявник</th>
+                <th class="py-3.5 px-6">Аудиторія</th>
+                <th class="py-3.5 px-6">Інтервал (Kyiv)</th>
+                <th class="py-3.5 px-6">Мета</th>
+                <th class="py-3.5 px-6 text-right">Рішення</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 text-sm">
+              <tr
+                v-for="b in pendingBookings"
+                :key="b.id"
+                class="hover:bg-slate-50/60"
+              >
+                <td class="py-4 px-6 font-mono text-slate-400">#{{ b.id }}</td>
+                <td class="py-4 px-6">
+                  <div class="font-semibold text-slate-900">
+                    {{ b.authorName }}
+                  </div>
+                  <div class="text-xs text-slate-400">
+                    {{ b.authorUsername }}
+                  </div>
+                </td>
+                <td class="py-4 px-6">
+                  <div class="font-semibold text-slate-900">
+                    {{ b.roomName }}
+                  </div>
+                  <div class="text-xs text-amber-700 font-medium">
+                    {{ b.capacity }} місць
+                  </div>
+                </td>
+                <td class="py-4 px-6 text-slate-700">
+                  <div>{{ formatKyivTime(b.startTime) }}</div>
+                  <div class="text-xs text-slate-400">
+                    до {{ formatKyivTime(b.endTime) }}
+                  </div>
+                </td>
+                <td class="py-4 px-6 text-slate-600">{{ b.purpose }}</td>
+                <td class="py-4 px-6 text-right space-x-2">
+                  <button
+                    @click="reviewBooking(b.id, true)"
+                    class="px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition"
+                  >
+                    Погодити
+                  </button>
+                  <button
+                    @click="reviewBooking(b.id, false)"
+                    class="px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg transition"
+                  >
+                    Відхилити
                   </button>
                 </td>
               </tr>
@@ -652,6 +849,15 @@ onMounted(initDashboard);
         <p class="text-sm text-slate-500 mt-1">
           {{ modalRoom.building }} • Місткість: {{ modalRoom.capacity }} місць
         </p>
+
+        <div
+          v-if="modalRoom.requiresApproval"
+          class="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs"
+        >
+          Увага: місткість аудиторії перевищує 100 місць. Після створення заявка
+          отримає статус <strong>Pending</strong>, зарезервує слот і вимагатиме
+          підтвердження адміністратора.
+        </div>
 
         <div
           class="mt-4 p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-sm space-y-1"

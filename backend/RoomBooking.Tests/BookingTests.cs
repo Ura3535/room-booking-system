@@ -72,4 +72,49 @@ public class BookingTests
         Assert.Contains(201, results);
         Assert.Contains(409, results);
     }
+    [Theory]
+    [InlineData(30, RoomBooking.Api.Models.BookingStatus.Active)]
+    [InlineData(100, RoomBooking.Api.Models.BookingStatus.Active)]
+    [InlineData(101, RoomBooking.Api.Models.BookingStatus.Pending)]
+    [InlineData(250, RoomBooking.Api.Models.BookingStatus.Pending)]
+    public void DetermineInitialStatus_RespectsCapacityThreshold(int capacity, RoomBooking.Api.Models.BookingStatus expected)
+    {
+        Assert.Equal(expected, BookingService.DetermineInitialStatus(capacity));
+    }
+
+    [Fact]
+    public async Task LargeRoomApproval_EnforcesAdminRoleAndPreventsDoubleReview()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(TestConn).Options;
+        await using var db = new AppDbContext(options);
+        try
+        {
+            await db.Database.EnsureDeletedAsync();
+            await db.Database.EnsureCreatedAsync();
+            await AppDbContext.SeedAsync(db);
+        }
+        catch { return; }
+
+        var service = new BookingService(db);
+        var start = DateTimeOffset.Parse("2026-11-26T10:00:00+02:00");
+        var end = DateTimeOffset.Parse("2026-11-26T12:00:00+02:00");
+
+        // RoomId = 3 ("Велика фізична", 150 місць) -> має отримати статус Pending
+        var createRes = await service.CreateBookingAsync(userId: 1, roomId: 3, start, end, "Конференція");
+        Assert.Equal(201, createRes.StatusCode);
+        Assert.Equal(RoomBooking.Api.Models.BookingStatus.Pending, createRes.Data!.Status);
+
+        // Звичайний студент (userId = 2) не може погодити заявку -> 403 Forbidden
+        var studentReview = await service.ReviewBookingAsync(createRes.Data.Id, adminUserId: 2, approve: true, comment: null);
+        Assert.Equal(403, studentReview.StatusCode);
+
+        // Адміністратор (userId = 3) погоджує заявку -> 200 OK (Active)
+        var adminReview = await service.ReviewBookingAsync(createRes.Data.Id, adminUserId: 3, approve: true, comment: "Ок");
+        Assert.Equal(200, adminReview.StatusCode);
+        Assert.Equal(RoomBooking.Api.Models.BookingStatus.Active, adminReview.Data!.Status);
+
+        // Повторне рішення по вже опрацьованій заявці -> 409 Conflict
+        var duplicateReview = await service.ReviewBookingAsync(createRes.Data.Id, adminUserId: 3, approve: false, comment: "Скасувати");
+        Assert.Equal(409, duplicateReview.StatusCode);
+    }
 }

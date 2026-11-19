@@ -14,6 +14,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<AppUser>().Property(u => u.Role).HasConversion<string>();
         modelBuilder.Entity<Booking>().Property(b => b.Status).HasConversion<string>();
         modelBuilder.Entity<Booking>().HasIndex(b => new { b.RoomId, b.StartTime, b.EndTime });
+        modelBuilder.Entity<Booking>()
+            .HasOne(b => b.User)
+            .WithMany()
+            .HasForeignKey(b => b.UserId);
+
+        modelBuilder.Entity<Booking>()
+            .HasOne(b => b.ReviewedByUser)
+            .WithMany()
+            .HasForeignKey(b => b.ReviewedByUserId);
     }
 
     public static async Task SeedAsync(AppDbContext db)

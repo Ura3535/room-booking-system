@@ -44,4 +44,9 @@ public class Booking
     public string Purpose { get; set; } = string.Empty;
     public BookingStatus Status { get; set; } = BookingStatus.Active;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    public int? ReviewedByUserId { get; set; }
+    public AppUser? ReviewedByUser { get; set; }
+    public DateTimeOffset? ReviewedAt { get; set; }
+    public string? ReviewComment { get; set; }
 }
