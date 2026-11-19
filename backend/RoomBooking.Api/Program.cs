@@ -15,6 +15,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddScoped<BookingService>();
+builder.Services.AddSingleton<TokenService>();
 
 builder.Services.AddCors(options =>
 {
