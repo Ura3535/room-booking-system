@@ -25,7 +25,7 @@ public class BookingService(AppDbContext db)
         if (user is null)
             return new(false, null, 401, "Користувача не знайдено.");
 
-        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
 
         var room = await db.Rooms
             .FromSqlInterpolated($"SELECT * FROM \"Rooms\" WHERE \"Id\" = {roomId} FOR UPDATE")
